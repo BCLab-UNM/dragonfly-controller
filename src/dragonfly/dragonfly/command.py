@@ -6,12 +6,14 @@ import time
 from datetime import datetime, timedelta
 
 import rclpy
+from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from mavros_msgs.msg import State
 from mavros_msgs.srv import SetMode, CommandBool, CommandTOL, ParamSetV2
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, HistoryPolicy, ReliabilityPolicy, DurabilityPolicy
 from rcl_interfaces.msg import ParameterValue, ParameterType
 from sensor_msgs.msg import NavSatFix
+from mavros_msgs.msg import Waypoint
 from std_msgs.msg import String
 from rx.subject import Subject
 
@@ -31,6 +33,7 @@ class DragonflyCommand:
     TEST_ALTITUDE = 3.0
 
     def __init__(self, id, node):
+        self.waypoint_publisher = None
         self.boundary_check_thread = None
         self.node = node
         self.zeroing = False
@@ -123,18 +126,23 @@ class DragonflyCommand:
     def goto(self, request, response):
         print("Commanded to goto")
 
+        #self.actionqueue.push(
+        #    SetPositionAction(self.local_setposition_publisher, 0, 10, self.TEST_ALTITUDE, self.orientation)) \
+        #    .push(SleepAction(10)) \
+        #    .push(SetPositionAction(self.local_setposition_publisher, 0, 0, self.TEST_ALTITUDE, self.orientation)) \
+        #    .push(SleepAction(10))
         self.actionqueue.push(
-            SetPositionAction(self.local_setposition_publisher, 0, 10, self.TEST_ALTITUDE, self.orientation)) \
+            SetPositionAction(self.waypoint_publisher, 0, 10, self.TEST_ALTITUDE, self.orientation)) \
             .push(SleepAction(10)) \
-            .push(SetPositionAction(self.local_setposition_publisher, 0, 0, self.TEST_ALTITUDE, self.orientation)) \
+            .push(SetPositionAction(self.waypoint_publisher, 0, 0, self.TEST_ALTITUDE, self.orientation)) \
             .push(SleepAction(10))
 
         return response
 
     def home(self, request, response):
         print("Commanded to home")
-
-        self.actionqueue.push(SetPositionAction(self.local_setposition_publisher, 0, 0, 10, self.orientation))
+        self.actionqueue.push(SetPositionAction(self.waypoint_publisher, 0, 0, 10, self.orientation))
+        #self.actionqueue.push(SetPositionAction(self.local_setposition_publisher, 0, 0, 10, self.orientation))
 
         return response
 
@@ -345,9 +353,13 @@ class DragonflyCommand:
                 print("Waypoint")
                 [waypoint, distance_threshold] = self.findWaypoint(step.goto_step.waypoint, request.waypoints)
                 if waypoint is not None:
+                    # self.actionqueue.push(LogAction(self.logPublisher, "Goto {}".format(step.goto_step.waypoint))) \
+                    #    .push(WaypointAction(self.id, self.logPublisher, self.local_setposition_publisher, waypoint,
+                    #                         distance_threshold, self.local_velocity_observable, self.local_position_observable))
                     self.actionqueue.push(LogAction(self.logPublisher, "Goto {}".format(step.goto_step.waypoint))) \
-                        .push(WaypointAction(self.id, self.logPublisher, self.local_setposition_publisher, waypoint,
+                        .push(WaypointAction(self.id, self.logPublisher, self.waypoint_publisher, waypoint,
                                              distance_threshold, self.local_velocity_observable, self.local_position_observable))
+
             elif step.msg_type == MissionStep.TYPE_SEMAPHORE:
                 print("Semaphore")
                 self.actionqueue.push(LogAction(self.logPublisher, "Waiting for semaphore...")) \
@@ -368,7 +380,7 @@ class DragonflyCommand:
                                                           step.ddsa_step.loops, step.ddsa_step.radius, step.ddsa_step.step_length,
                                                           step.ddsa_step.altitude, self.orientation)
                     self.actionqueue.push(AltitudeAction(self.id,
-                                                         self.local_setposition_publisher,
+                                                         self.waypoint_publisher,
                                                          waypoint.pose.position.z + (
                                                                  step.ddsa_step.radius * step.ddsa_step.swarm_index),
                                                          step.ddsa_step.distance_threshold,
@@ -379,7 +391,7 @@ class DragonflyCommand:
                         waypoint.pose.position.z + (step.ddsa_step.radius * step.ddsa_step.swarm_index),
                         self.orientation)
                     self.actionqueue.push(
-                        WaypointAction(self.id, self.logPublisher, self.local_setposition_publisher, position_waypoint,
+                        WaypointAction(self.id, self.logPublisher, self.waypoint_publisher, position_waypoint,
                                        step.ddsa_step.distance_threshold, self.local_velocity_observable, self.local_position_observable))
                     self.runWaypoints("DDSA", waypoints, step.ddsa_step.wait_time, step.ddsa_step.distance_threshold)
             elif step.msg_type == MissionStep.TYPE_LAWNMOWER:
@@ -465,7 +477,7 @@ class DragonflyCommand:
             self.actionqueue.push(
                 LogAction(self.logPublisher, "Goto {} {}/{}".format(waypoints_name, i + 1, len(waypoints))))
             self.actionqueue.push(
-                WaypointAction(self.id, self.logPublisher, self.local_setposition_publisher, waypoint,
+                WaypointAction(self.id, self.logPublisher, self.waypoint_publisher, waypoint,
                                distance_threshold, self.local_velocity_observable, self.local_position_observable))
             if wait_time > 0:
                 self.actionqueue.push(SleepAction(wait_time))
@@ -475,7 +487,7 @@ class DragonflyCommand:
 
     def runPlumeAwareWaypoints(self, name, waypoints, boundary_length, parameters):
         self.actionqueue.push(PlumeAwareLawnmowerAction(name, self.id, self.logPublisher, waypoints, boundary_length, parameters,
-                                                        self.local_setposition_publisher, self.local_position_observable,
+                                                        self.waypoint_publisher, self.local_position_observable,
                                                         self.local_velocity_observable,
                                                         self.drone_stream_factory.get_drone(self.id).get_co2()))
 
@@ -516,7 +528,7 @@ class DragonflyCommand:
         self.canceled = True
         self.actionqueue.stop()
         self.actionqueue.push(
-            StopInPlaceAction(self.id, self.logPublisher, self.local_setposition_publisher, self.local_position_observable))
+            StopInPlaceAction(self.id, self.logPublisher, self.waypoint_publisher, self.local_position_observable))
 
     def loop(self):
         try:
@@ -551,6 +563,7 @@ class DragonflyCommand:
                                                                       "/{}/mavros/setpoint_velocity/cmd_vel".format(
                                                                           self.id), qos_profile=QoSProfile(
                 history=HistoryPolicy.KEEP_LAST, depth=10))
+        self.waypoint_publisher = self.node.create_publisher(Waypoint, "/{}/mavros/mission/waypoints".format(self.id), 10)
         # self.global_setpoint_publisher = self.node.create_publisher(GlobalPositionTarget, "/{}/mavros/setpoint_position/global".format(self.id), 10)
 
         # self.node.create_subscription(NavSatFix, "/{}/mavros/global_position/raw/fix".format(self.id), self.position_callback, 10)
@@ -573,7 +586,7 @@ class DragonflyCommand:
                                    qos_profile=QoSProfile(durability=DurabilityPolicy.VOLATILE, reliability=ReliabilityPolicy.BEST_EFFORT, depth=10))
         self.node.create_publisher(PoseStamped, "/{}/mavros/local_position/pose".format(self.id),
                                    qos_profile=QoSProfile(durability=DurabilityPolicy.VOLATILE, reliability=ReliabilityPolicy.BEST_EFFORT, depth=10))
-        self.node.create_publisher(State, "/{}/mavros/gmavros/state".format(self.id),
+        self.node.create_publisher(State, "/{}/mavros/mavros/state".format(self.id),
                                    qos_profile=QoSProfile(durability=DurabilityPolicy.VOLATILE, reliability=ReliabilityPolicy.BEST_EFFORT, depth=10))
 
         def updateStateSubject(state):
