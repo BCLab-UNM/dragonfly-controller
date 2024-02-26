@@ -4,7 +4,7 @@ from rx.subject import Subject
 from sensor_msgs.msg import NavSatFix
 from geometry_msgs.msg import TwistStamped
 from sensor_msgs.msg import Range
-from dragonfly_messages.msg import CO2
+from dragonfly_messages.msg import CO2, PositionVector
 from rclpy.qos import QoSProfile, QoSHistoryPolicy, HistoryPolicy, ReliabilityPolicy
 
 class DroneStream:
@@ -21,6 +21,8 @@ class DroneStream:
         self.velocity_subject_init = False
         self.rangefinder_subject = Subject()
         self.rangefinder_subject_init = False
+        self.sketch_control = Subject()
+        self.sketch_control_init = False
         self.mean = 0
         self.std_dev = 1
 
@@ -63,6 +65,18 @@ class DroneStream:
 
         return self.rangefinder_subject
 
+    def get_sketch_control(self):
+        if not self.sketch_control_init:
+            self.node.create_subscription(PositionVector, f"{self.name}/sketch",
+                                          lambda value: self.sketch_control.on_next(value),
+                                          qos_profile=QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT))
+            self.sketch_control_init = True
+
+        return self.sketch_control
+
+    def get_sketch_control_publisher(self):
+        return self.node.create_publisher(PositionVector, f"{self.name}/sketch",
+                                          qos_profile=QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10))
 
 class DroneStreamFactory:
 

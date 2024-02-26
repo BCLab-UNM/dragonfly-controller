@@ -52,7 +52,6 @@ class DragonflyCommand:
         self.local_velocity_observable = Subject()
         self.dragonfly_announce_subject = Subject()
         self.semaphore_observable = Subject()
-        self.dragonfly_sketch_subject = Subject()
 
     def setmode(self, mode):
         self.logger.info(f"Set Mode {mode}")
@@ -446,8 +445,7 @@ class DragonflyCommand:
                 self.actionqueue.push(LogAction(self.logPublisher, "Sketch")) \
                     .push(SketchAction(self.id, self.logPublisher, self.logger, self.local_setvelocity_publisher, self.dragonfly_announce_subject,
                                        step.sketch_step.offset, step.sketch_step.partner, step.sketch_step.leader, self.drone_stream_factory,
-                                       self.semaphore_observable, self.semaphore_publisher,
-                                       self.dragonfly_sketch_subject, self.position_vector_publisher, step.sketch_step.threshold))
+                                       self.semaphore_observable, self.semaphore_publisher, step.sketch_step.threshold))
 
             elif step.msg_type == MissionStep.TYPE_VERTICAL_TRANSECT:
                 self.logger.info("Vertical Transect")
@@ -589,11 +587,6 @@ class DragonflyCommand:
         self.node.create_subscription(String, "/dragonfly/announce",
                                       lambda name: self.dragonfly_announce_subject.on_next(name),
                                       qos_profile=QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT))
-        self.node.create_subscription(PositionVector, "/dragonfly/sketch",
-                                      lambda positionVector: self.dragonfly_sketch_subject.on_next(positionVector),
-                                      qos_profile=QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT))
-        self.position_vector_publisher = self.node.create_publisher(PositionVector, "/dragonfly/sketch",
-                                                              qos_profile=QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10))
         self.semaphore_publisher = self.node.create_publisher(SemaphoreToken, "/dragonfly/semaphore",
                                                               qos_profile=QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10))
 

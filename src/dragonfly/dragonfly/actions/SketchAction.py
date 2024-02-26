@@ -87,7 +87,7 @@ class SketchAction:
     SKETCH_STARTING_THRESHOLD = 20 # m
 
     def __init__(self, id, log_publisher, logger, local_setvelocity_publisher, announce_stream, offset, partner, leader,
-                 drone_stream_factory, semaphore_observable, semaphore_publisher, dragonfly_sketch_subject, position_vector_publisher, threshold):
+                 drone_stream_factory, semaphore_observable, semaphore_publisher, threshold):
         self.log_publisher = log_publisher
         self.logger = logger
         self.local_setvelocity_publisher = local_setvelocity_publisher
@@ -99,14 +99,14 @@ class SketchAction:
         self.ros_subscriptions = []
         self.announce_stream = announce_stream
         self.drone_stream_factory = drone_stream_factory
-        self.dragonfly_sketch_subject = dragonfly_sketch_subject
-        self.position_vector_publisher = position_vector_publisher
+        self.dragonfly_sketch_subject = Subject()
         self.semaphore_observable = semaphore_observable
         self.semaphore_publisher = semaphore_publisher
 
         self.navigate_subscription = rx.empty().subscribe()
         self.leader_broadcast_subscription = rx.empty().subscribe()
         self.receive_semaphore_subscription = rx.empty().subscribe()
+        self.sketch_control_subscription = rx.empty().subscribe()
 
         self.target_position_vector = None
         self.encountered = False
@@ -153,10 +153,12 @@ class SketchAction:
 
             if self.leader:
                 self.leader_broadcast_subscription = rx.combine_latest(
+                    rx.just(self.get_leader_drone().get_sketch_control_publisher()),
                     self.setup_subject(self.partner),
                     self.setup_subject(self.id)
-                ).subscribe(lambda position_reading_vector: self.broadcast_target(position_reading_vector[0], position_reading_vector[1]))
+                ).subscribe(lambda position_reading_vector: self.broadcast_target(position_reading_vector[0], position_reading_vector[1], position_reading_vector[2]))
             else:
+                self.sketch_control_subscription = self.get_leader_drone().get_sketch_control().subscribe(self.dragonfly_sketch_subject)
                 self.receive_semaphore_subscription = self.semaphore_observable.subscribe(on_next = lambda token: self.listen_for_stop(token))
 
         return self.status
@@ -164,6 +166,9 @@ class SketchAction:
     @staticmethod
     def build_sketch_end_id(id):
         return f"sketch.{id}"
+
+    def get_leader_drone(self):
+        return self.drone_stream_factory.get_drone(self.id if self.leader else self.partner)
 
     def listen_for_stop(self, token):
         self.logger.info(f"{self.id}: Received token")
@@ -285,7 +290,7 @@ class SketchAction:
 
             return center_correction
 
-    def broadcast_target(self, partner_position, self_position):
+    def broadcast_target(self, position_vector_publisher, partner_position, self_position):
 
         average_position = average(self_position, partner_position)
 
@@ -330,8 +335,8 @@ class SketchAction:
 
         if self.encountered and self.passed(average_position):
             self.target_position_vector = self.boundary_sketch(partner_position, self_position)
-        # self.logger.info(f"PV: {self.target_position_vector}")
-        self.position_vector_publisher.publish(self.target_position_vector)
+        # self.logger.info(f"PV: {self.target_position_vector} to {position_vector_publisher}")
+        position_vector_publisher.publish(self.target_position_vector)
         self.dragonfly_sketch_subject.on_next(self.target_position_vector)
 
     def calculate_gradient(self):
@@ -517,3 +522,4 @@ class SketchAction:
         self.navigate_subscription.dispose()
         self.leader_broadcast_subscription.dispose()
         self.receive_semaphore_subscription.dispose()
+        self.sketch_control_subscription.dispose()
